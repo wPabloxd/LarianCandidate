@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NeonSwordCharacter.h"
+#include "NeonSwordGameMode.h"
 #include "NeonSwordProjectile.h"
 #include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
@@ -81,6 +82,14 @@ ANeonSwordCharacter::ANeonSwordCharacter()
 	WallDetectionCapsule->SetCollisionResponseToAllChannels(ECR_Ignore);
 	WallDetectionCapsule->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
 
+	//WallDirectionSphere = CreateDefaultSubobject<USphereComponent>(TEXT("WallDirectionSphere"));
+	//WallDirectionSphere->SetupAttachment(RootComponent);
+
+	//WallDirectionSphere->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	//WallDirectionSphere->SetCollisionObjectType(ECC_WorldDynamic);
+	//WallDirectionSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+	//WallDirectionSphere->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Overlap);
+
 	HandParticleMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("HandParticleMesh"));
 	HandParticleMesh->SetupAttachment(Mesh1P);
 
@@ -94,8 +103,6 @@ void ANeonSwordCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
-
-	//UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.1f);
 	WallDetectionCapsule->OnComponentBeginOverlap.AddDynamic(this, &ANeonSwordCharacter::OnWallCapsuleBeginOverlap);
 	WallDetectionCapsule->OnComponentEndOverlap.AddDynamic(this, &ANeonSwordCharacter::OnWallCapsuleEndOverlap);
 
@@ -116,6 +123,8 @@ void ANeonSwordCharacter::BeginPlay()
 	ElectricityNiagara->SetRelativeRotation(FRotator::ZeroRotator);
 	ElectricityNiagara->SetRelativeLocation(FVector::ZeroVector);
 	UpdateHandParticleSpawnRate(0.0f);
+
+	//UGameplayStatics::SetGlobalTimeDilation(GetWorld(), 0.1f);
 
 	if (!AudioComponentWallJump)
 	{
@@ -147,9 +156,20 @@ void ANeonSwordCharacter::BeginPlay()
 	AudioComponentSlide->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
 	AudioComponentSlide->SetSound(SlideSound);
 
+	if (!AudioComponentHeartBeat)
+	{
+		AudioComponentHeartBeat = NewObject<UAudioComponent>(this);
+		AudioComponentHeartBeat->RegisterComponent();
+		AudioComponentHeartBeat->bAutoDestroy = false;
+	}
+
+	AudioComponentHeartBeat->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+	AudioComponentHeartBeat->SetSound(HeartBeatCue);
+	AudioComponentHeartBeat->SetVolumeMultiplier(0.0f);
+
 	TimeSpeedChange = RegularTimeSpeedChange;
 	CurrentHP = MaxHP;
-	UpdateHPBar();
+	UpdateHPBar(0.0f);
 
 	DeactivateSwordSphere();
 
@@ -177,6 +197,21 @@ void ANeonSwordCharacter::BeginPlay()
 
 	SetMovementState(EMovementState::Walking);
 	SetUtilityState(EUtilityState::Idle);
+
+	ANeonSwordGameMode* GameMode = Cast<ANeonSwordGameMode>(UGameplayStatics::GetGameMode(GetWorld()));
+	if (GameMode)
+	{
+		bIsTutorialActivated = GameMode->bIsTutorialActivated;
+		bUltimateUnlocked = GameMode->bUltimateUnlocked;
+		bDashAttackUnlocked = GameMode->bDashAttackUnlocked;
+
+		if (!GameMode->bShieldUnlocked)
+		{
+			ToggleLightShield(false);
+			AddChargeAmount(100.0f, false);
+			bShieldUnlocked = GameMode->bShieldUnlocked;
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////// Input
@@ -196,6 +231,7 @@ void ANeonSwordCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInput
 		
 		//EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Triggered, this, &ANeonSwordCharacter::Sprint);
 		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &ANeonSwordCharacter::StartSprint);
+		EnhancedInputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &ANeonSwordCharacter::EndSprint);
 	
 		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Triggered, this, &ANeonSwordCharacter::CrouchToggler);
 		
@@ -227,6 +263,7 @@ void ANeonSwordCharacter::Tick(float DeltaTime)
 	UpdateMovementAnimationSpeed();
 	UpdateArmsOffset();
 	UpdateCameraHeadBob();
+	UpdateHeartSound(DeltaTime);
 	
 	HandParticleMesh->AttachToComponent(Mesh1P, FAttachmentTransformRules::SnapToTargetIncludingScale, FName("LeftHandSocket"));
 	
@@ -287,9 +324,15 @@ void ANeonSwordCharacter::Tick(float DeltaTime)
 	if (bIsLeftHandInSword) 
 		UpdateLeftHandPosition();
 
-	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Current: %f"), AttackHoldTime));
+	if (bHasToJumpAtMax && GetVelocity().Z <= DoubleJumpMinVelocity) {
+		bHasToJumpAtMax = false;
+		Jump();
+	}
+
+	//GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, FString::Printf(TEXT("Health: %f"), GetVelocity().Z));
+	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Current: %f"), GetGroundPlaneVelocitySize()));
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Healing: %f"), ActualRegenerationRate));
-	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Is hugging?  %s"), bIsInvincible ? TEXT("true") : TEXT("false")));
+	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Is hugging?  %s"), bIsSprintLocked ? TEXT("true") : TEXT("false")));
 	//FString MovementStateString = GetMovementStateString(CurrentMovementState);
 	//FString MovementStateString = GetUtilityStateString(CurrentUtilityState);
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, FString::Printf(TEXT("Current Utilty State: %s"), *MovementStateString));
@@ -355,9 +398,18 @@ void ANeonSwordCharacter::Move(const FInputActionValue& Value)
 
 void ANeonSwordCharacter::EndMove()
 {
-	bIsSprintLocked = false;
+	if (!bIsSprintKeyPressed) {
+
+		bIsSprintLocked = false;
+		SetTargetSpeed(EMovementState::Walking, WalkingSpeed, RegularTimeSpeedChange, false);
+	}
+
+	if (bIsCrouching) 
+	{
+		SetTargetSpeed(EMovementState::Crouching, CrouchingSpeed, RegularTimeSpeedChange, false);
+	}
+
 	LastMovementInput = FVector2D::ZeroVector;
-	SetTargetSpeed(EMovementState::Walking, WalkingSpeed, RegularTimeSpeedChange, false);
 }
 
 void ANeonSwordCharacter::UpdateMovementAnimationSpeed()
@@ -417,6 +469,12 @@ void ANeonSwordCharacter::Look(const FInputActionValue& Value)
 		AddControllerYawInput(LookAxisVector.X);
 		AddControllerPitchInput(LookAxisVector.Y);
 	}
+}
+
+void ANeonSwordCharacter::UnlockShield()
+{
+	ToggleLightShield(true);
+	bShieldUnlocked = true;
 }
 
 void ANeonSwordCharacter::UpdateArmsOffset()
@@ -541,11 +599,30 @@ void ANeonSwordCharacter::Sprint(const FInputActionValue& Value)
 
 void ANeonSwordCharacter::StartSprint()
 {
-	if (bIsCrouching) {
+	//if (LastMovementInput == FVector2D::ZeroVector)
+	//	return;
+
+	if (bIsCrouching)
 		return;
-	}
+
 	bIsSprintLocked = true;
+	bIsSprintKeyPressed = true;
 	SetTargetSpeed(EMovementState::Sprinting, SprintingSpeed, RegularTimeSpeedChange, false);
+}
+
+void ANeonSwordCharacter::EndSprint()
+{
+	if (LastMovementInput == FVector2D::ZeroVector) {
+
+		if(bIsCrouching)
+			SetTargetSpeed(EMovementState::Crouching, CrouchingSpeed, RegularTimeSpeedChange, false);
+		else
+			SetTargetSpeed(EMovementState::Walking, WalkingSpeed, RegularTimeSpeedChange, false);
+
+		bIsSprintLocked = false;
+	}
+
+	bIsSprintKeyPressed = false;
 }
 
 void ANeonSwordCharacter::ResetJustSprinted()
@@ -867,7 +944,7 @@ void ANeonSwordCharacter::UpdateCrouchHold()
 
 void ANeonSwordCharacter::CrouchToggler(const FInputActionValue& Value)
 {
-	bool IsCrouched = Value.Get<bool>();
+	bool IsInputCrouched = Value.Get<bool>();
 
 	bIsCrouchToggled = !bIsCrouchToggled;
 	if (!bHoldCrouch)
@@ -878,12 +955,12 @@ void ANeonSwordCharacter::CrouchToggler(const FInputActionValue& Value)
 
 		if (bIsCrouching)
 		{
-			IsCrouched = !IsCrouched;
+			IsInputCrouched = !IsInputCrouched;
 		}
 	}
 
 	bIsCrouchTransition = true;
-	if (IsCrouched)
+	if (IsInputCrouched)
 	{
 		bBufferUncrouch = false;
 		TargetCapsuleHeight = HeightCrouched;
@@ -923,7 +1000,10 @@ void ANeonSwordCharacter::SmoothCrouchingTransition(float DeltaTime)
 	GetCapsuleComponent()->SetCapsuleHalfHeight(NewHeight);
 
 	GetFirstPersonCameraComponent()->AddRelativeLocation(FVector(0.0f, 0.0f, NewHeight - CurrentHeight));
-	//AddActorLocalOffset(FVector(0.0f, 0.0f, (NewHeight - CurrentHeight) * 2));
+
+	if (!GetCharacterMovement()->IsFalling()) 
+		AddActorLocalOffset(FVector(0.0f, 0.0f, (NewHeight - CurrentHeight) * 2));
+
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Other Speed"));
 	if (FMath::IsNearlyEqual(NewHeight, TargetCapsuleHeight, 1.0f)) {
 		bIsCrouchTransition = false;
@@ -1116,6 +1196,11 @@ void ANeonSwordCharacter::Jump()
 		return;
 	}
 
+	if (GetVelocity().Z > DoubleJumpMinVelocity) {
+		bHasToJumpAtMax = true;
+		return;
+	}
+
 	Super::Jump();
 }
 
@@ -1138,7 +1223,7 @@ void ANeonSwordCharacter::CheckJumpInput(float DeltaTime)
 				JumpCurrentCount++;
 			}
 
-			const bool bDidJump = CanJump() && GetCharacterMovement()->DoJump(bClientUpdating);
+			const bool bDidJump = CanJump() && GetCharacterMovement()->DoJump(bClientUpdating, DeltaTime);
 			if (bDidJump)
 			{
 				// Transition from not (actively) jumping to jumping.
@@ -1158,6 +1243,8 @@ void ANeonSwordCharacter::CheckJumpInput(float DeltaTime)
 					}
 					
 					JumpForceTimeRemaining = GetJumpMaxHoldTime();
+
+
 					OnJumped();
 				}
 			}
@@ -1281,7 +1368,9 @@ float ANeonSwordCharacter::TakeDamage(float DamageAmount, FDamageEvent const& Da
 	GetWorld()->GetTimerManager().ClearTimer(RegenerationTimer);
 	GetWorld()->GetTimerManager().SetTimer(RegenerationTimer, this, &ANeonSwordCharacter::ActivateRegenerateHealth, RegenerationDelay, false);
 	
-	UpdateHPBar();
+	HeartBeatRate += DamageAmount;
+
+	UpdateHPBar(DamageAmount);
 	CameraShake(DamageAmount * 0.1f);
 
 	if (CurrentHP <= 0)
@@ -1305,22 +1394,21 @@ void ANeonSwordCharacter::RegeneratingHealth(float DeltaTime)
 	if (CurrentHP < MaxHP)
 	{
 		CurrentHP = FMath::Min(CurrentHP + ActualRegenerationRate * DeltaTime, MaxHP);
+		UpdateHPBar(-ActualRegenerationRate * DeltaTime);
+		HeartBeatRate -= ActualRegenerationRate * DeltaTime;
 		ActualRegenerationRate *=  1 + RegenerationExponentialFactor * DeltaTime;
-
 		//GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, FString::Printf(TEXT("Health: %f, Regen Rate: %f"), CurrentHP, RegenerationRate));
-		UpdateHPBar();
 	}
 	else
 	{
+		HeartBeatRate = 60.0f;
 		ActualRegenerationRate = RegenerationRate;
 		GetWorld()->GetTimerManager().ClearTimer(RegenerationTimer);
 		bIsRenegerating = false;
-
-
 	}
 }
 
-void ANeonSwordCharacter::UpdateHPBar()
+void ANeonSwordCharacter::UpdateHPBar(float Damage)
 {
 	if (PlayerHUD)
 	{
@@ -1329,6 +1417,8 @@ void ANeonSwordCharacter::UpdateHPBar()
 		if (PlayerWidget)
 		{
 			PlayerWidget->UpdateHealth(CurrentHP);
+			PlayerWidget->UpdateDamageScreenState(CurrentHP);
+			PlayerWidget->GetDamageScreenUpdate(Damage);
 		}
 	}
 }
@@ -1336,6 +1426,32 @@ void ANeonSwordCharacter::UpdateHPBar()
 void ANeonSwordCharacter::FellOutOfWorld(const UDamageType& dmgType)
 {
 	ReloadLevel();
+}
+
+void ANeonSwordCharacter::UpdateHeartSound(float DeltaTime)
+{
+	TimeSinceLastBeat += DeltaTime;
+
+	float NewPitch = FMath::GetMappedRangeValueClamped(FVector2D(60.0f, 160.0f), FVector2D(1.00f, 2.67f), HeartBeatRate);
+	
+	if (HeartBeatRate > 100.0f) {
+		float NewVolume = FMath::GetMappedRangeValueClamped(FVector2D(100.0f, 160.0f), FVector2D(0.0f, 1.5f), HeartBeatRate);
+		AudioComponentHeartBeat->SetVolumeMultiplier(NewVolume);
+		AudioComponentHeartBeat->SetPitchMultiplier(NewPitch);
+		//GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, FString::Printf(TEXT("Hola %f"), NewPitch));
+	
+		if (TimeSinceLastBeat >= 1 / NewPitch)
+		{
+			UPlayerHUD* PlayerWidget = Cast<UPlayerHUD>(PlayerHUD);
+			PlayerWidget->UpdateDamageBeat(HeartBeatRate);
+
+			float Margin = TimeSinceLastBeat - 1 / NewPitch;
+			TimeSinceLastBeat -= Margin;
+			TimeSinceLastBeat -= 1 / NewPitch;
+			AudioComponentHeartBeat->Play();
+			//GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green, FString::Printf(TEXT("Hola %f"), NewPitch));
+		}
+	}
 }
 
 void ANeonSwordCharacter::StartCameraLerpTo(FRotator NewTargetRotation, float Duration)
@@ -1353,7 +1469,8 @@ void ANeonSwordCharacter::CameraLerpToRotation(float DeltaTime)
 
 	FRotator CurrentRotation = GetControlRotation();
 
-	FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetCameraRotation, DeltaTime, 1.0f / DeltaTime);
+	FRotator NewRotation = FMath::Lerp(CurrentRotation, TargetCameraRotation, Alpha);
+	//FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetCameraRotation, DeltaTime, 1.0f / DeltaTime);
 	if (GetController())
 	{
 		GetController()->SetControlRotation(NewRotation);
@@ -1387,8 +1504,17 @@ void ANeonSwordCharacter::ReloadLevel()
 	UGameplayStatics::OpenLevel(this, FName(*GetWorld()->GetName()));
 }
 
+void ANeonSwordCharacter::ToggleLightShield(bool bIsActive)
+{
+	ShieldDynamicMaterial->SetScalarParameterValue(TEXT("Alpha"), bIsActive ? 0.374407f : 1.0f);
+	HandDynamicMaterial->SetScalarParameterValue(TEXT("LightIntensity"), bIsActive ? 50000.0f : 0.0f);
+}
+
 void ANeonSwordCharacter::StartShield()
 {
+	if (!bShieldUnlocked)
+		return;
+
 	//if (GetChargeAmount() <= 2.5f)
 	//	return;
 	if (bShieldInCoolDown || CurrentUtilityState == EUtilityState::SwordAttack || CurrentUtilityState == EUtilityState::Shield || CurrentUtilityState == EUtilityState::DashAttack) {
@@ -1537,7 +1663,7 @@ void ANeonSwordCharacter::OnUltimateActive()
 		UPlayerHUD* PlayerWidget = Cast<UPlayerHUD>(PlayerHUD);
 		if (PlayerWidget)
 		{
-			PlayerWidget->UpdateUltimateCharge(UltimateAmount);
+			PlayerWidget->UpdateUltimateCharge(UltimateAmount, true);
 		}
 	}
 }
@@ -1626,6 +1752,20 @@ void ANeonSwordCharacter::EndStun()
 
 void ANeonSwordCharacter::StartDashAttack()
 {
+	if (!bDashAttackUnlocked)
+		return;
+
+	if (bIsCrouching) {
+		if (CanUncrouch(false)) {
+
+			CrouchToggler(FInputActionValue());
+		}
+		else {
+			UGameplayStatics::PlaySoundAtLocation(this, NotEnoughEnergyCue, GetActorLocation());
+			return;
+		}
+	}
+
 	if (bIsUltimateActive)
 		return;
 	if (GetChargeAmount() < DashAttackEnergyCost) {
@@ -1727,8 +1867,7 @@ void ANeonSwordCharacter::StopDash()
 
 void ANeonSwordCharacter::StartDashImpaling()
 {
-	GetController()->SetIgnoreMoveInput(true);
-	GetController()->SetIgnoreLookInput(true);
+	SetPlayerControls(false);
 
 	DashTargetEnemy->BeingImpaled(DashEnemyTargetLocation);
 	UGameplayStatics::PlaySoundAtLocation(this, SwordImpaleSoundCue, GetActorLocation());
@@ -1738,8 +1877,7 @@ void ANeonSwordCharacter::StartDashImpaling()
 
 void ANeonSwordCharacter::StopDashImpaling()
 {
-	GetController()->SetIgnoreMoveInput(false);
-	GetController()->SetIgnoreLookInput(false);
+	SetPlayerControls(true);
 
 	EndDashAttack();
 }
@@ -1770,6 +1908,17 @@ void ANeonSwordCharacter::EndDashAttack()
 	bDashReachedEnemy = false;
 	SetUtilityState(EUtilityState::Idle);
 	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, FString::Printf(TEXT("Adios")));
+}
+
+void ANeonSwordCharacter::SetPlayerControls(bool bState)
+{
+	if(bState)
+		EnableInput(Cast<APlayerController>(GetController()));
+	else
+		DisableInput(Cast<APlayerController>(GetController()));
+
+	//GetController()->SetIgnoreMoveInput(!bState);
+	//GetController()->SetIgnoreLookInput(!bState);
 }
 
 FVector ANeonSwordCharacter::GetObjective(float SphereRadius)
@@ -1913,6 +2062,9 @@ void ANeonSwordCharacter::KineticEnergyUpdate(float DeltaTime)
 
 void ANeonSwordCharacter::AddChargeAmount(float ChargeToAdd, bool bCanBreakGuard)
 {
+	if (!bShieldUnlocked)
+		return;
+
 	ChargeAmount += ChargeToAdd;
 	ChargeAmount = FMath::Clamp(ChargeAmount, 0.0f, 100.0f);
 	
@@ -1943,13 +2095,16 @@ void ANeonSwordCharacter::AddChargeAmount(float ChargeToAdd, bool bCanBreakGuard
 
 		if (PlayerWidget)
 		{
-			PlayerWidget->UpdateCharge(ChargeAmount);
+			PlayerWidget->UpdateCharge(ChargeAmount, GetCurrentChargeColor());
 		}
 	}
 }
 
 void ANeonSwordCharacter::AddUltChargeAmount(float ChargeToAdd)
 {
+	if (!bUltimateUnlocked)
+		return;
+
 	if (bIsUltimateActive)
 		return;
 
@@ -1962,7 +2117,7 @@ void ANeonSwordCharacter::AddUltChargeAmount(float ChargeToAdd)
 
 		if (PlayerWidget)
 		{
-			PlayerWidget->UpdateUltimateCharge(UltimateAmount);
+			PlayerWidget->UpdateUltimateCharge(UltimateAmount, false);
 		}
 		if (UltimateAmount >= 100.0f)
 		{
@@ -2011,6 +2166,9 @@ void ANeonSwordCharacter::OnSphereBeginOverlap(UPrimitiveComponent* OverlappedCo
 				GetSword()->MakeDamage(Enemy);
 				if (GetKineticEnergyAmount() <= 2.5f) {
 					SwordAttackBounceOff();
+
+					if(bIsTutorialActivated)
+						DisplayBounceMessage();
 				}
 			}
 			//else {

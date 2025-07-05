@@ -45,6 +45,9 @@ class ANeonSwordCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision", meta = (AllowPrivateAccess = "true"))
 	UCapsuleComponent* WallDetectionCapsule;
 
+	//UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision", meta = (AllowPrivateAccess = "true"))
+	//USphereComponent* WallDirectionSphere;
+
 	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NS | Weapons")
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = Arms, meta = (AllowPrivateAccess = "true"))
 	UChildActorComponent* SwordActor;
@@ -133,6 +136,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	USoundBase* NotEnoughEnergyCue;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	USoundBase* HeartBeatCue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	USoundWave* HeartBeatSoundWave;
+
 	float GetHP()
 	{
 		return CurrentHP;
@@ -187,11 +196,16 @@ public:
 
 	FVector GetObjective(float SphereRadius);
 
-
 	EUtilityState CurrentUtilityState;
 	void SetUtilityState(EUtilityState NewState);
 
 	EUtilityState GetUtilityState();
+
+	void SetPlayerControls(bool bState);
+
+	FORCEINLINE void SetIsGrabbingShield(bool bNewState) {
+		bIsGrabbingShield = bNewState;
+	}
 
 protected:
 
@@ -215,6 +229,22 @@ protected:
 
 	/** Called for looking input */
 	void Look(const FInputActionValue& Value);
+
+	/** Game mode settings */
+
+	bool bIsTutorialActivated = false;
+
+	bool bShieldUnlocked = true;
+
+	UFUNCTION(BlueprintCallable, Category = "Unlockable")
+	void UnlockShield();
+
+	bool bUltimateUnlocked = true;
+
+	bool bDashAttackUnlocked = false;
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Tutorial")
+	void DisplayBounceMessage();
 
 	/** Arms Offset Section */
 
@@ -244,6 +274,11 @@ protected:
 	bool bBufferJumpAction = false;
 
 	bool bHadDoubleJump = false;
+
+	bool bHasToJumpAtMax = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NS | Jump System")
+	float DoubleJumpMinVelocity = 150.0f;
 
 	/** Wall Jump Section */
 
@@ -286,8 +321,10 @@ protected:
 
 	void Sprint(const FInputActionValue& Value);
 	void StartSprint();
+	void EndSprint();
 
 	bool bIsSprintLocked = false;
+	bool bIsSprintKeyPressed = false;
 
 	float TargetSpeed = 0.f;
 	bool bIsTransitioningSpeed = false;
@@ -530,6 +567,8 @@ public:
 
 	void DeactivateSwordSphere();
 
+	void StartCameraLerpTo(FRotator NewTargetRotation, float Duration);
+
 private:
 
 	/** Input Buffering */
@@ -572,9 +611,17 @@ private:
 
 	void RegeneratingHealth(float DeltaTime);
 
-	void UpdateHPBar();
+	void UpdateHPBar(float Damage);
 
 	void FellOutOfWorld(const UDamageType& dmgType) override;
+
+	float HeartBeatRate = 60.0f;
+
+	float TimeSinceLastBeat = 0.0f;
+
+	void UpdateHeartSound(float DeltaTime);
+
+	UAudioComponent* AudioComponentHeartBeat;
 
 	/** Camera Rotation */
 
@@ -586,8 +633,6 @@ private:
 
 	bool bIsLerpingCamera = false;
 
-	void StartCameraLerpTo(FRotator NewTargetRotation, float Duration);
-
 	void CameraLerpToRotation(float DeltaTime);
 
 private:
@@ -598,6 +643,8 @@ private:
 	void ReloadLevel();
 
 	/** Shield */
+
+	void ToggleLightShield(bool bIsActive);
 
 	void StartShield();
 
@@ -767,6 +814,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NS | Camera | Offset")
 	float CameraOffsetZ = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "NS | Shield")
+	bool bIsGrabbingShield = false;
 
 	FTimerHandle StunTimerHandler;
 
