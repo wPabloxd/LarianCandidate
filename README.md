@@ -1,5 +1,4 @@
-# LarianCandidate
-
+# Code Samples
 **SRSpaceMovementComponent** is a script from the Cosmic Decode project, it consist in the ability of the character to walk on any surface regardless of the inclination (no gravity), mantaining the correct camera angle and relative controls and smoothing everything out. (You can see that this script has a lot more comments than the rest because this was a group project and I had to comunicate with the other members that would use my code).
 
 **NeonSwordCharacter** is the main character script from my last solo project Neon Sword (You can play a short alpha test here: https://drive.google.com/file/d/1CxNgkQLXyriH6BvtwPKJWUqcX-6hxh2J/view). 
